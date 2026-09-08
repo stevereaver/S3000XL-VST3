@@ -26,9 +26,10 @@ jobs:
           msystem: MINGW64
           update: true
           install: >-
+            git
             make
-            python
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
 
       - name: Clone JUCE
         uses: actions/checkout@v4
@@ -72,8 +73,9 @@ jobs:
           OS: Windows_NT
           MINGW_PREFIX: /mingw64
         run: |
-          cd mame
           export PATH=/mingw64/bin:$PATH
+          python3 -c "import sys; print(f'Using Python: {sys.executable}')"
+          cd mame
           make vs2022 SUBTARGET=s3000xl SOURCES=src/mame/akai/s3000.cpp NOWERROR=1
 
       - name: Build MAME libraries
