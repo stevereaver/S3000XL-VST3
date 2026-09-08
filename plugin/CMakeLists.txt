@@ -54,9 +54,7 @@ target_sources(S3000XL-VST
         "${PLUGIN_SOURCE_DIR}/PluginProcessor.h"
         "${PLUGIN_SOURCE_DIR}/PluginEditor.h"
         "${PLUGIN_SOURCE_DIR}/PresetBrowserComponent.h"
-        "${PLUGIN_SOURCE_DIR}/mpc_clickmap.h"
-        "${PLUGIN_SOURCE_DIR}/esqpanel.h"
-        "${PLUGIN_SOURCE_DIR}/sd1disk.h")
+        "${PLUGIN_SOURCE_DIR}/mpc_clickmap.h")
 
 # ------------------------------------------------------------------------------
 # Generated JuceHeader.h (the source code uses #include <JuceHeader.h>)
