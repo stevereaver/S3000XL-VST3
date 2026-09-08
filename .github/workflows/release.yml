@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  JUCE_VERSION: "8.0.15"
+  MAME_TAG: "mame0288"
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            python
+            mingw-w64-x86_64-gcc
+
+      - name: Clone JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: ${{ env.JUCE_VERSION }}
+          path: JUCE
+          fetch-depth: 1
+
+      - name: Clone MAME
+        uses: actions/checkout@v4
+        with:
+          repository: mamedev/mame
+          ref: ${{ env.MAME_TAG }}
+          path: mame
+          fetch-depth: 1
+
+      - name: Apply MAME patches
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path patches -Filter *.patch | Sort-Object Name | ForEach-Object {
+            Write-Host "Applying $($_.Name)"
+            git -C mame apply --verbose $_.FullName
+          }
+
+      - name: Restore MAME libraries
+        id: cache-mame
+        uses: actions/cache@v4
+        with:
+          path: mame/build/vs2022/bin/x64/Release
+          key: mame-s3000xl-${{ runner.os }}-${{ env.MAME_TAG }}-${{ hashFiles('patches/**/*.patch') }}
+          restore-keys: |
+            mame-s3000xl-${{ runner.os }}-${{ env.MAME_TAG }}-
+            mame-s3000xl-${{ runner.os }}-
+
+      - name: Generate MAME Visual Studio project
+        if: steps.cache-mame.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        env:
+          MSYSTEM: MINGW64
+          OS: Windows_NT
+          MINGW_PREFIX: /mingw64
+        run: |
+          cd mame
+          export PATH=/mingw64/bin:$PATH
+          make vs2022 SUBTARGET=s3000xl SOURCES=src/mame/akai/s3000.cpp NOWERROR=1
+
+      - name: Build MAME libraries
+        if: steps.cache-mame.outputs.cache-hit != 'true'
+        shell: cmd
+        env:
+          _CL_: /U_WIN32_WINNT /UNTDDI_VERSION /D_WIN32_WINNT=0x0A00 /DNTDDI_VERSION=0xA000000
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          msbuild mame\build\projects\windows\mames3000xl\vs2022\mames3000xl.sln ^
+            /p:Configuration=Release /p:Platform=x64 /p:PreferredToolArchitecture=x64 ^
+            /m /v:minimal /nologo
+
+      - name: Configure plugin
+        shell: pwsh
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DJUCE_ROOT="${{ github.workspace }}\JUCE" `
+            -DMAME_ROOT="${{ github.workspace }}\mame"
+
+      - name: Build plugin
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target S3000XL-VST_VST3 --parallel
+
+      - name: Package VST3
+        shell: pwsh
+        run: |
+          $out = "S3000XL-VST3-${{ github.ref_name }}-win64"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $vst3 = Get-ChildItem -Path build/S3000XL-VST_artefacts/Release -Recurse -Filter "*.vst3" | Select-Object -First 1
+          if (-not $vst3) { throw "VST3 bundle not found" }
+          Copy-Item -Path $vst3.FullName -Destination $out -Recurse
+          Compress-Archive -Path "$out\*" -DestinationPath "$out.zip" -Force
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: S3000XL-VST3-*.zip
+          draft: true
+          generate_release_notes: true

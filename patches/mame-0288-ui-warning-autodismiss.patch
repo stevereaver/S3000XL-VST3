@@ -1,0 +1,14 @@
+﻿diff --git a/src/frontend/mame/ui/ui.cpp b/src/frontend/mame/ui/ui.cpp
+index a9982cda..cc2de609 100644
+--- a/src/frontend/mame/ui/ui.cpp
++++ b/src/frontend/mame/ui/ui.cpp
+@@ -676,6 +676,9 @@ void mame_ui_manager::display_startup_screens(bool first_time)
+ 	auto handler_messagebox_anykey =
+ 		[this, &poller, &warning_text, &warning_color, &config_menu, &target = machine().render().ui_target()] () -> uint32_t
+ 		{
++			// Headless/VST: no physical input providers are active, so auto-dismiss message boxes.
++			return HANDLER_CANCEL;
++
+ 			// draw a standard message window
+ 			draw_text_box(target, warning_text, ui::text_layout::text_justify::LEFT, 0.5F, 0.5F, warning_color);
+ 

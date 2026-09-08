@@ -1,0 +1,105 @@
+/*
+  ==============================================================================
+    
+    S3000XL-VST - S3000XL MAME VST Emulation
+    Open Source GPLv2/v3
+    https://www.sojusrecords.com
+
+  ==============================================================================
+*/
+
+#pragma once
+
+#include <JuceHeader.h>
+#include "PluginProcessor.h"
+#include "PresetBrowserComponent.h"
+
+//==============================================================================
+
+class EnsoniqSD1AudioProcessorEditor  : public juce::AudioProcessorEditor,
+                                        private juce::Timer
+{
+public:
+    EnsoniqSD1AudioProcessorEditor (EnsoniqSD1AudioProcessor&);
+    ~EnsoniqSD1AudioProcessorEditor() override;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    
+    // Timer callback used for polling frame updates and layout changes
+    void timerCallback() override;
+    
+    // --- JUCE MOUSE EVENTS ---
+    void mouseDown (const juce::MouseEvent& e) override;
+    void mouseUp   (const juce::MouseEvent& e) override;
+    void mouseDrag (const juce::MouseEvent& e) override;
+    void mouseMove (const juce::MouseEvent& e) override;
+
+    // --- S3000XL panel click -> buttonParams[] (reliable set_value path) ---
+    int mpcHitTest(int px, int py);
+    int mpcPressedIndex = -1;
+    // DATA ENTRY dial drag state
+    bool dialDragActive = false;
+    int  dialDragLastY = 0;
+
+    void saveGlobalSettings();
+    void flushFileManagerState(); // Flushes active browser state to processor before saving
+
+private:
+    EnsoniqSD1AudioProcessor& audioProcessor;
+    
+    // --- PRESET MANAGER ---
+    PresetBrowserComponent presetBrowser;
+    int lastViewBeforeBrowser = 0;
+    
+    // --- SAVE MACRO ---
+    juce::TextButton saveBadge;
+    juce::Label savePromptLabel;
+    juce::OwnedArray<juce::TextButton> bankSelectButtons;  // 10 buttons for bank 0-9
+    int saveMacroPhase = 0;  // 0=idle, 1=choose bank, 2=bank held, click SOFT
+    
+    // KILL COMPARE AT LOAD
+    bool startupCompareChecked = false;
+        
+    // --- ROM HANDLING ---
+    juce::TextButton locateRomButton { "Locate sd132.zip" };
+    juce::TextButton rescanRomButton { "Rescan sd132.zip" };
+    std::unique_ptr<juce::FileChooser> romChooser;
+    void locateRomButtonClicked();
+    
+    juce::TextButton loadMediaButton { "MEDIA" };
+    std::unique_ptr<juce::FileChooser> fileChooser;
+    void loadMediaButtonClicked();
+
+    // --- SETTINGS PANEL GUI COMPONENTS ---
+    juce::TextButton settingsButton { "Settings / About" };
+    juce::GroupComponent settingsGroup { "settings_group", "S3000XL-VST Settings v1.0.1 3397" };
+    
+    juce::Label bufferLabel { "buffer_label", "MAME(R) Engine buffer:" };
+    juce::ComboBox bufferCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> bufferAttachment;
+
+    // --- DYNAMIC PANEL SELECTOR ---
+    juce::Label viewLabel { "view_label", "Panel Layout:" };
+    juce::ComboBox viewCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> viewAttachment;
+
+    juce::Label aboutLabel { "about_label", "Built with love by MAMEDev and contributors and sojusrecords.com\n\nThis software includes MAME(R) emulator components\n and is licensed under the GPL v2/v3.\nAll trademarks are property of their respective owners." };
+    juce::HyperlinkButton webLink { "visit sojusrecords.com", juce::URL("https://www.sojusrecords.com") };
+    juce::TextButton closeSettingsButton { "Close" };
+
+    bool isSettingsVisible = false;
+    void toggleSettings();
+    
+    std::unique_ptr<juce::Drawable> floppyIcon;
+    std::unique_ptr<juce::Drawable> cartIcon;
+    
+    // Calculates and applies the optimal window size based on the active layout aspect ratio
+    void updateWindowSize(); 
+        
+    // --- WINDOW SIZE TRACKING ---
+    // Used by the Timer to detect when the MAME internal layout resolution changes
+    int lastView = -1;
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EnsoniqSD1AudioProcessorEditor)
+};

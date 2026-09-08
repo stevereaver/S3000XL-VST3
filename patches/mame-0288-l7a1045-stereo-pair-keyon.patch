@@ -1,0 +1,54 @@
+diff --git a/src/devices/sound/l7a1045_l6028_dsp_a.cpp b/src/devices/sound/l7a1045_l6028_dsp_a.cpp
+index bd1fe109..5cdb4ed6 100644
+--- a/src/devices/sound/l7a1045_l6028_dsp_a.cpp
++++ b/src/devices/sound/l7a1045_l6028_dsp_a.cpp
+@@ -590,6 +590,49 @@ void l7a1045_sound_device::control_w(uint16_t data)
+ 
+ 		recalc_loop_start(vptr);
+ 
++		// ---------------------------------------------------------------------------------
++		// STEREO VOICE PAIRS (fixes half-sided stereo samples on the MPC3000)
++		//
++		// Measured firmware behaviour (v3.12, logged register traffic): for a stereo sample
++		// the MPC programs the hard-LEFT half on voice (ch ^ 2) and the hard-RIGHT half on
++		// voice ch, then issues a SINGLE key-on with ch selected, e.g.
++		//     mixer ch 1 = b400 (l b4 / r 00)   <- left half
++		//     mixer ch 3 = 00b4 (l 00 / r b4)   <- right half
++		//     control ch 3 = 0100 (key on)      <- one key-on for the pair
++		// The hardware starts both halves of the pair; emulating only the selected voice
++		// leaves the left half silent, so stereo samples play on one side only.
++		//
++		// Trigger conservatively: only when this voice and its (ch ^ 2) partner form a
++		// complementary hard-panned pair, and the partner is not already sounding. A mono
++		// voice (equal l/r volumes) never matches, so mono playback is unaffected.
++		// ---------------------------------------------------------------------------------
++		{
++			const uint8_t partner = m_cur_channel ^ 2;
++			l7a1045_voice *const pptr = &m_voice[partner];
++
++			const bool this_hard_right = (vptr->l_volume == 0) && (vptr->r_volume != 0);
++			const bool this_hard_left  = (vptr->r_volume == 0) && (vptr->l_volume != 0);
++			const bool pair_hard_left  = (pptr->r_volume == 0) && (pptr->l_volume != 0);
++			const bool pair_hard_right = (pptr->l_volume == 0) && (pptr->r_volume != 0);
++
++			if (!BIT(m_key, partner)
++				&& ((this_hard_right && pair_hard_left) || (this_hard_left && pair_hard_right)))
++			{
++				pptr->frac = 0;
++				pptr->pos = 0;
++				m_key |= 1 << partner;
++
++				// recalc_loop_start() reads m_regs[..][m_cur_channel], so point it at the
++				// partner for the duration of the call.
++				const uint8_t saved_channel = m_cur_channel;
++				m_cur_channel = partner;
++				recalc_loop_start(pptr);
++				m_cur_channel = saved_channel;
++
++				LOGMASKED(LOG_KEYON, "ch %d key on: also starting stereo partner ch %d\n", m_cur_channel, partner);
++			}
++		}
++
+ 		LOGMASKED(LOG_KEYON, "ch %d key on start %08x end %08x loop %08x mixer %016llx\n", m_cur_channel, vptr->start, vptr->end, vptr->loop_start, m_regs[L6028_Mixer_Params][m_cur_channel]);
+ 		LOGMASKED(LOG_KEYON, "      raw 0 %012llx 1 %012llx 2 %012llx\n", m_regs[0][m_cur_channel], m_regs[1][m_cur_channel], m_regs[2][m_cur_channel]);
+ 		LOGMASKED(LOG_KEYON, "      raw 3 %012llx 4 %012llx 5 %012llx\n", m_regs[3][m_cur_channel], m_regs[4][m_cur_channel], m_regs[5][m_cur_channel]);
