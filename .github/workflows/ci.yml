@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+env:
+  JUCE_VERSION: "8.0.15"
+  MAME_TAG: "mame0288"
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+
+      - name: Clone JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: ${{ env.JUCE_VERSION }}
+          path: JUCE
+          fetch-depth: 1
+
+      - name: Clone MAME
+        uses: actions/checkout@v4
+        with:
+          repository: mamedev/mame
+          ref: ${{ env.MAME_TAG }}
+          path: mame
+          fetch-depth: 1
+
+      - name: Apply MAME patches
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path patches -Filter *.patch | Sort-Object Name | ForEach-Object {
+            Write-Host "Applying $($_.Name)"
+            git -C mame apply --verbose $_.FullName
+          }
+
+      - name: Restore MAME libraries
+        id: cache-mame
+        uses: actions/cache@v4
+        with:
+          path: mame/build/vs2022/bin/x64/Release
+          key: mame-s3000xl-${{ runner.os }}-${{ env.MAME_TAG }}-${{ hashFiles('patches/**/*.patch') }}
+          restore-keys: |
+            mame-s3000xl-${{ runner.os }}-${{ env.MAME_TAG }}-
+            mame-s3000xl-${{ runner.os }}-
+
+      - name: Generate MAME Visual Studio project
+        if: steps.cache-mame.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        env:
+          MSYSTEM: MINGW64
+          OS: Windows_NT
+          MINGW_PREFIX: /mingw64
+        run: |
+          export PATH=/mingw64/bin:$PATH
+          python3 -c "import sys; print(f'Using Python: {sys.executable}')"
+          cd mame
+          make vs2022 SUBTARGET=s3000xl SOURCES=src/mame/akai/s3000.cpp NOWERROR=1
+
+      - name: Set up MSBuild
+        if: steps.cache-mame.outputs.cache-hit != 'true'
+        uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
+
+      - name: Build MAME libraries
+        if: steps.cache-mame.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          _CL_: /U_WIN32_WINNT /UNTDDI_VERSION /D_WIN32_WINNT=0x0A00 /DNTDDI_VERSION=0xA000000
+        run: |
+          $solution = Get-ChildItem mame/build/projects/windows -Recurse -Filter mames3000xl.sln | Select-Object -First 1
+          if (-not $solution) { throw "Generated mames3000xl.sln was not found" }
+          Write-Host "Building $($solution.FullName)"
+          msbuild $solution.FullName `
+            /p:Configuration=Release /p:Platform=x64 /p:PreferredToolArchitecture=x64 `
+            /m /v:minimal /nologo
+
+      - name: Configure plugin
+        shell: pwsh
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DJUCE_ROOT="${{ github.workspace }}\JUCE" `
+            -DMAME_ROOT="${{ github.workspace }}\mame"
+
+      - name: Build plugin
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target S3000XL-VST_VST3 --parallel
+
+      - name: Upload VST3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: S3000XL-VST3-run-${{ github.run_number }}-${{ github.sha }}
+          path: build/plugin/S3000XL-VST_artefacts/Release/VST3/S3000XL-VST.vst3
+          if-no-files-found: error
+
+      - name: Verify no ROMs / disk images in artifact
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem -Path build/plugin/S3000XL-VST_artefacts -Recurse -Include *.bin,*.chd,*.iso,*.img,*.hfe,*.eeprom,*.nrg,*.cue -ErrorAction SilentlyContinue
+          if ($bad) {
+            Write-Error "ROM/disk image found in build output: $($bad.FullName)"
+            exit 1
+          }

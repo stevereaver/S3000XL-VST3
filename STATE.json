@@ -1,0 +1,48 @@
+{
+  "project": "S3000XL-VST — Akai S3000XL sampler wrapped as a VST3/AU instrument (MAME 0.288 core in a Sojus-style JUCE host)",
+  "protocol": "A2A: the repo/source is the judge. Grep before claiming. The compiler & DAW are the judges. See MAME-to-VSTi-RECIPE.md.",
+  "version": "STATE v3 (S3000XL) — v1.1: the DATA ENTRY dial is now an ENDLESS (wrapping) encoder.",
+
+  "DATA_ENTRY_DIAL_WRAP": "The dial no longer clamps at either end. Four juce::jlimit(0,255,...) clamps were replaced with & 0xFF: the click step and the drag step in PluginEditor.cpp, the 'data_entry' parameter handler, and the OSD apply block that calls analog->set_value(). Rationale: PORT_BIT(0xff, 0x00, IPT_DIAL) gives the firmware an ABSOLUTE position from which it derives rotation, so wrapping 255->0 and 0->255 is what the hardware knob does — clamping made it feel like it hit a stop. The same design was implemented from scratch for the MPC3000 this round (see MPC3000_Port/STATE.json DATA_ENTRY_DIAL). User-verified in the host.",
+
+
+  "PUBLISHED": {
+    "repo": "https://github.com/Tuth/S3000XL-VST (public, GPLv3, NO ROMs). Release v1.0 with the win64 VST3 zip.",
+    "history_note": "IMPORTANT: the local 'master' branch history CONTAINS the firmware ROM blob (added in fec8792, removed in ace78e3). It must NEVER be pushed. The public repo was created from an ORPHAN branch 'public' (pushed as origin/main) so no ROM object is reachable from anything published. Keep publishing from 'public'; if you ever need to publish master, purge the blob first (git filter-repo).",
+    "lcd_fix": "LCD live-refresh FIXED (was the last open item): the OSD dirty-frame hash only mixed prim->texture.base (the bitmap ADDRESS). The LCD renders into the same buffer, so content changes (blinking cursor, load progress) left the hash unchanged and the frame was dropped -> 'refreshes only on events'. Fix: also hash prim->texture.seqid, which MAME bumps whenever a texture's CONTENT changes. VERIFIED: cursor blinks, display live.",
+    "stereo_fix": "L7A1045 stereo voice-pair key-on fix applied (see mame-0288-l7a1045-stereo-pair-keyon.patch) — the same chip is shared with the MPC3000 family."
+  },
+
+  "machine": {
+    "short_name": "s3000xl",
+    "driver": "src/mame/akai/s3000.cpp (R. Belmont). Built on MPC3000-variant hardware.",
+    "core_devices": "V53A CPU, L7A1045-L6028 sound DSP, HD61830/LC7981 LCD, upd72069 FDC, MB89352 SCSI, midi_port. No 7810/7811 sub-CPU (simpler than MPC3000).",
+    "roms": "maincpu s3000xl_v2_0.bin (512K, SHA1 ace009953aeccff4dfbee0ccfa091a0fea39a386) + device ROM hd61830.bin (1472b, NEEDS REDUMP, shared with MPC3000). Folder Documents/S3000XL/ROMs/s3000xl/. NOT in git.",
+    "layout": "s3000xl.lay (view 6000x1112, wide rackmount aspect ~5.4)."
+  },
+  "WORKING": {
+    "panel_render": "AKAI S3000XL panel from the MAME layout; buttons C0..C7 via hit-test -> buttonParams -> set_value; auto-generated clickmap (36 buttons + 2 dial zones).",
+    "audio": "STEREO. m_outputs_count = 3 (verified via -wavwrite): ch0 = FLOPPY sound (dropped), ch1 = MAIN L, ch2 = MAIN R. Stride 3, take pcm[i*3+1]/[i*3+2]. Clean (RAM test + sample playback).",
+    "midi": "VST MIDI in/out via the emulated UART; responsive.",
+    "media": "Floppy + CD + HDD. HDD (.chd) and CD (.iso via cdrom_2x) load samples CLEANLY. See findings below.",
+    "dial": "DATA ENTRY = IPT_DIAL analog -> analog_field::set_value; click (+-1) + drag-to-turn + 'data_entry' VST param.",
+    "params": "45 VST params (5 float + 38 button bool + 2 choice) exposed. Requires the unique pluginCode (see findings)."
+  },
+  "KEY_FINDINGS": {
+    "audio_stride": "MAME final mix stride = m_outputs_count (machine-specific): SD-1=5, MPC3000=11, S3000XL=3. Wrong stride = gaps (too big) or scrambled audio (too small). Measure via -wavwrite WAV header. Identify main L/R; drop the floppy-sound channel.",
+    "cd_timing": "cdrom vs cdrom_2x share identity (Sony CDU-76S), differ ONLY in SCSI timing. The firmware needs cdrom_2x's paced 2x transfer to read a disc CLEANLY; plain cdrom is too fast -> corrupted sample data -> crackle. cdrom_2x does NOT slow emulation (186%). Use cdrom_2x when a disc is loaded, plain cdrom when empty.",
+    "scsi_defaults": "s3000xl PRE-POPULATES scsi:4=cdrom_2x, scsi:5=harddisk (MPC3000 leaves them empty). Don't blindly override pre-populated slots.",
+    "media_lock": "MAME opens harddisk .chd READ-WRITE EXCLUSIVE. A 2nd MAME instance (standalone MAMEUI) holding the same disk -> 'permission denied (generic:13)' -> fatal error. Don't run standalone MAME on the same disk while testing.",
+    "graceful_bootfail": "Check cli_frontend::execute() return; on failure set isMameRunning=false (no DAW freeze) + clear persisted media paths (no crash-loop).",
+    "unique_plugincode": "Each plugin needs a UNIQUE 4-char pluginCode. Shared code (both 'Mp30') = same VST3 UID = DAW confuses param caches (only Volume showed). S3000XL='S3kx', MPC3000='Mp30'.",
+    "black_panel": "Missing device ROM (hd61830.bin) -> MAME silently fails to start -> black panel. Include device ROMs in the self-check."
+  },
+  "OPEN_ITEMS": {
+    "lcd_render_pump": "The LCD only refreshes on events. OSD update() early-returned on skip_redraw (under -nothrottle MAME frameskips -> grab skipped). Decoupling from skip_redraw was applied but did NOT fully fix it. NEXT: pump the frame grab on a fixed cadence / drive video().frame_update() independent of MAME's frameskip.",
+    "max_ram": "Sample space is 32 MiB (.ram() at s3000.cpp L364). Confirm the v2.0 firmware sizes it (SIMM-ID probe); target 32 MiB, fallback 16 MiB.",
+    "format_combos": "F7+F8 (Format) and other 2-key combos are hard with mouse-only; plan: expose unused-CC button routing so a hardware controller can send them."
+  },
+  "build": "CMake/MSVC build. MAME: make vs2022 SUBTARGET=s3000xl SOURCES=src/mame/akai/s3000.cpp. Plugin: cmake --preset windows-release && cmake --build build --config Release --target S3000XL-VST_VST3. VST3 bundle: build/plugin/S3000XL-VST_artefacts/Release/VST3/S3000XL-VST.vst3. See BUILD.md.",
+  "last_updated": "2026-07-26",
+  "mantra": "The chat can be lost; the repo cannot. Grep before you claim. The compiler & the DAW are the judges."
+}

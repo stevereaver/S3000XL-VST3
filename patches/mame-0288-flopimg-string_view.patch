@@ -1,0 +1,12 @@
+﻿diff --git a/src/lib/formats/flopimg.h b/src/lib/formats/flopimg.h
+index af90d852..f0b73625 100644
+--- a/src/lib/formats/flopimg.h
++++ b/src/lib/formats/flopimg.h
+@@ -16,6 +16,7 @@
+ #include "utilfwd.h"
+ 
+ #include <memory>
++#include <string_view>
+ #include <vector>
+ 
+ #include <cassert>
