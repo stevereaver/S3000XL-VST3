@@ -112,7 +112,7 @@ jobs:
       - name: Upload VST3 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: S3000XL-VST3-${{ github.ref_name }}-${{ github.sha }}
+          name: S3000XL-VST3-run-${{ github.run_number }}-${{ github.sha }}
           path: build/plugin/S3000XL-VST_artefacts/Release/VST3/S3000XL-VST.vst3
           if-no-files-found: error
 
