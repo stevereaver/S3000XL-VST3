@@ -113,13 +113,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: S3000XL-VST3-${{ github.ref_name }}-${{ github.sha }}
-          path: build/S3000XL-VST_artefacts/Release/**/*.vst3
+          path: build/plugin/S3000XL-VST_artefacts/Release/VST3/S3000XL-VST.vst3
           if-no-files-found: error
 
       - name: Verify no ROMs / disk images in artifact
         shell: pwsh
         run: |
-          $bad = Get-ChildItem -Path build/S3000XL-VST_artefacts -Recurse -Include *.bin,*.chd,*.iso,*.img,*.hfe,*.eeprom,*.nrg,*.cue -ErrorAction SilentlyContinue
+          $bad = Get-ChildItem -Path build/plugin/S3000XL-VST_artefacts -Recurse -Include *.bin,*.chd,*.iso,*.img,*.hfe,*.eeprom,*.nrg,*.cue -ErrorAction SilentlyContinue
           if ($bad) {
             Write-Error "ROM/disk image found in build output: $($bad.FullName)"
             exit 1

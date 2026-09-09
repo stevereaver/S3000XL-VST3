@@ -87,7 +87,7 @@ cmake --preset windows-release
 cmake --build build --config Release --target S3000XL-VST_VST3 --parallel
 ```
 
-The VST3 bundle is written to `build\S3000XL-VST_artefacts\Release\S3000XL-VST.vst3`.
+The VST3 bundle is written to `build\plugin\S3000XL-VST_artefacts\Release\VST3\S3000XL-VST.vst3`.
 
 ### 6. Install / test
 

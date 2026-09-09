@@ -113,7 +113,7 @@ jobs:
         run: |
           $out = "S3000XL-VST3-${{ github.ref_name }}-win64"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $vst3 = Get-ChildItem -Path build/S3000XL-VST_artefacts/Release -Recurse -Filter "*.vst3" | Select-Object -First 1
+          $vst3 = Get-Item -Path build/plugin/S3000XL-VST_artefacts/Release/VST3/S3000XL-VST.vst3 -ErrorAction SilentlyContinue
           if (-not $vst3) { throw "VST3 bundle not found" }
           Copy-Item -Path $vst3.FullName -Destination $out -Recurse
           Compress-Archive -Path "$out\*" -DestinationPath "$out.zip" -Force

@@ -39,7 +39,7 @@ Feature branches should target `dev`. When `dev` is green, open a PR to `main`; 
    scripts\build-plugin.ps1 -Config Release
    ```
 
-The generated VST3 bundle will be under `build\S3000XL-VST_artefacts\Release\`.
+The generated VST3 bundle will be under `build\plugin\S3000XL-VST_artefacts\Release\VST3\`.
 
 For more details, see [BUILD.md](BUILD.md).
 

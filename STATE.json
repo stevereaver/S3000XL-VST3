@@ -42,7 +42,7 @@
     "max_ram": "Sample space is 32 MiB (.ram() at s3000.cpp L364). Confirm the v2.0 firmware sizes it (SIMM-ID probe); target 32 MiB, fallback 16 MiB.",
     "format_combos": "F7+F8 (Format) and other 2-key combos are hard with mouse-only; plan: expose unused-CC button routing so a hardware controller can send them."
   },
-  "build": "CMake/MSVC build. MAME: make vs2022 SUBTARGET=s3000xl SOURCES=src/mame/akai/s3000.cpp. Plugin: cmake --preset windows-release && cmake --build build --config Release --target S3000XL-VST_VST3. VST3 bundle: build/S3000XL-VST_artefacts/Release/S3000XL-VST.vst3. See BUILD.md.",
+  "build": "CMake/MSVC build. MAME: make vs2022 SUBTARGET=s3000xl SOURCES=src/mame/akai/s3000.cpp. Plugin: cmake --preset windows-release && cmake --build build --config Release --target S3000XL-VST_VST3. VST3 bundle: build/plugin/S3000XL-VST_artefacts/Release/VST3/S3000XL-VST.vst3. See BUILD.md.",
   "last_updated": "2026-07-26",
   "mantra": "The chat can be lost; the repo cannot. Grep before you claim. The compiler & the DAW are the judges."
 }
