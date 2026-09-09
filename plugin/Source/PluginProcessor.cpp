@@ -2878,7 +2878,7 @@ void EnsoniqSD1AudioProcessor::runMameEngine()
     args.push_back("mame");
     args.push_back("s3000xl");
     args.push_back("-inipath");
-    args.push_back("H:\\workspaces\\s3000xl-vst\\build-env\\mame-ini");
+    args.push_back("F:\\My Drive\\workspaces\\s3000xl-vst\\build-env\\mame-ini");
     
     // --- 2. ROM PATH CONFIGURATION ---
     juce::File romsDir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
