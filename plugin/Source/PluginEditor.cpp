@@ -1344,7 +1344,7 @@ void EnsoniqSD1AudioProcessorEditor::loadMediaButtonClicked()
 {
     juce::PopupMenu m;
     m.addSectionHeader("Floppy  (removable - hot swap)");
-    m.addItem(2, "Insert Floppy Image (.img, .hfe, .dsk)...");
+    m.addItem(2, "Insert Floppy Image (.akai, .img, .hfe, .dsk)...");
     m.addItem(4, "Eject Floppy", audioProcessor.isFloppyLoaded.load(std::memory_order_acquire));
     m.addSeparator();
     m.addSectionHeader("CD-ROM  (reboots on change)");
@@ -1362,7 +1362,7 @@ void EnsoniqSD1AudioProcessorEditor::loadMediaButtonClicked()
             // --- Insert/Set image (floppy=2, cd=6, hdd=8) ---
             if (result == 2 || result == 6 || result == 8) {
                 juce::String title, filter;
-                if      (result == 2) { title = "Select Floppy Image";   filter = "*.img;*.hfe;*.dsk;*.ima;*.imd;*.td0;*.ipf"; }
+                if      (result == 2) { title = "Select Floppy Image";   filter = "*.akai;*.img;*.hfe;*.dsk;*.ima;*.imd;*.td0;*.ipf"; }
                 else if (result == 6) { title = "Select CD-ROM Image";   filter = "*.chd;*.cue;*.iso;*.toc;*.nrg;*.gdi"; }
                 else                  { title = "Select Hard Disk Image"; filter = "*.chd;*.hd;*.hdv;*.2mg;*.hdi"; }
 
