@@ -97,7 +97,7 @@ void EnsoniqSD1AudioProcessor::pushAudioFromMame(const int16_t* pcmBuffer, int n
             uint64_t readPos = getTotalRead();
             int64_t available = writePos - readPos;
 
-            int maxAllowedBuffer = mameBufferThreshold.load(std::memory_order_relaxed);
+            int maxAllowedBuffer = getEffectiveBufferThreshold();
             
             if (isNonRealtime()) {
                 maxAllowedBuffer = maxOfflineBuffer.load(std::memory_order_relaxed);
@@ -130,18 +130,36 @@ void EnsoniqSD1AudioProcessor::pushAudioFromMame(const int16_t* pcmBuffer, int n
             needAnchorSync.store(false, std::memory_order_release);
         }
         
-    // S3000XL: MAME record mix = 3 interleaved outputs (verified via -wavwrite: 3ch/48k).
-    // Channel map (boot capture + in-DAW test): ch0 = FLOPPY seek sound, ch1 = MAIN L, ch2 = MAIN R.
-    // STRIDE = 3. Main stereo = ch1/ch2. The floppy mechanical channel (ch0) is intentionally
-    // DROPPED (no disk-rattle in the instrument output).
+    // S3000XL: MAME delivers the final speaker mix as interleaved int16.
+    // The stride equals the machine's total speaker output channel count
+    // (m_outputs_count). The driver declares one 2-channel speaker, but with
+    // the floppy drive's mechanical sound enabled the total becomes 3. In the
+    // 3-channel layout the mechanical channel comes first (ch0), so the main
+    // stereo is ch1=L, ch2=R. Query MAME at runtime and adapt.
+    int mameChannels = 2;
+    int leftChannel = 0;
+    int rightChannel = 1;
+    uint32_t mameSampleRate = 0;
+    if (mameMachine != nullptr) {
+        mameChannels = static_cast<int>(mameMachine->sound().outputs_count());
+        mameSampleRate = mameMachine->sample_rate();
+        if (mameChannels < 2)
+            mameChannels = 2;
+        else if (mameChannels == 3) {
+            // ch0 = mechanical/floppy, ch1 = MAIN L, ch2 = MAIN R.
+            leftChannel = 1;
+            rightChannel = 2;
+        }
+    }
+
     for (int i = 0; i < numSamples; ++i) {
 
                 int index = currentWritePos & (RING_BUFFER_SIZE - 1);
 
-                ringBufferL[index]    = pcmBuffer[i * 3 + 1] / 32768.0f;  // MAIN L  (ch1)
-                ringBufferR[index]    = pcmBuffer[i * 3 + 2] / 32768.0f;  // MAIN R  (ch2)
+                ringBufferL[index]    = pcmBuffer[i * mameChannels + leftChannel] / 32768.0f;  // MAIN L
+                ringBufferR[index]    = pcmBuffer[i * mameChannels + rightChannel] / 32768.0f;  // MAIN R
 
-                ringBufferAuxL[index] = 0.0f;   // ch0 = floppy sound -> dropped
+                ringBufferAuxL[index] = 0.0f;
                 ringBufferAuxR[index] = 0.0f;
 
         currentWritePos++;
@@ -155,6 +173,59 @@ void EnsoniqSD1AudioProcessor::pushAudioFromMame(const int16_t* pcmBuffer, int n
         needAnchorSync.store(false, std::memory_order_release);
     }
 
+}
+
+// OSD output stream path: MAME delivers 2-channel interleaved int16 (L, R)
+// through sound_stream_sink_update. This is the modern audio path that
+// actually works — the record buffer path (add_audio_to_recording) only
+// delivers the floppy speaker's audio, not the main stereo speaker.
+void EnsoniqSD1AudioProcessor::pushAudioFromMameOSD(const int16_t* buffer, int numSamples)
+{
+    if (!isMameRunningFlag()) return;
+    if (numSamples <= 0) return;
+
+    // Throttle: wait if ring buffer is full
+    while (isMameRunningFlag()) {
+        if (requestMameSave.load(std::memory_order_acquire) || requestMameLoad.load(std::memory_order_acquire))
+            break;
+        if (needAnchorSync.load(std::memory_order_acquire))
+            break;
+
+        uint64_t writePos = getTotalWritten();
+        uint64_t readPos = getTotalRead();
+        int64_t available = writePos - readPos;
+        int maxAllowedBuffer = getEffectiveBufferThreshold();
+        if (isNonRealtime())
+            maxAllowedBuffer = maxOfflineBuffer.load(std::memory_order_relaxed);
+        if (available < maxAllowedBuffer)
+            break;
+
+#ifdef _WIN32
+        mameThrottleEvent.wait(1);
+#else
+        mameThrottleEvent.wait(5);
+#endif
+    }
+
+    uint64_t currentWritePos = totalWritten.load(std::memory_order_relaxed);
+
+    if (needAnchorSync.load(std::memory_order_acquire) && mameMachine != nullptr) {
+        anchorMameTime.store(mameMachine->time().as_double(), std::memory_order_relaxed);
+        anchorDawSample.store(currentWritePos, std::memory_order_relaxed);
+        needAnchorSync.store(false, std::memory_order_release);
+    }
+
+    // Write 2-channel interleaved buffer to ring buffers
+    for (int i = 0; i < numSamples; ++i) {
+        int index = currentWritePos & (RING_BUFFER_SIZE - 1);
+        ringBufferL[index] = buffer[i * 2 + 0] / 32768.0f;
+        ringBufferR[index] = buffer[i * 2 + 1] / 32768.0f;
+        ringBufferAuxL[index] = 0.0f;
+        ringBufferAuxR[index] = 0.0f;
+        currentWritePos++;
+    }
+
+    totalWritten.store(currentWritePos, std::memory_order_release);
 }
     
 // ==============================================================================
@@ -440,7 +511,7 @@ public:
                         if (osram[0xCE0B] != 0x01) osram[0xCE0B] = 0x01;
                     }
                 }
-        
+
         // NOTE: do NOT early-return on skip_redraw. Under -nothrottle MAME frequently frameskips
         // (skip_redraw=true), which used to gate the LCD frame-grab below -> the panel only
         // refreshed when an event forced a rendered frame. We grab the frame every update() so the
@@ -584,6 +655,7 @@ public:
                     
                     auto* osram_share = mame_machine->root_device().memshare("osram");
                     auto* seqram_share = mame_machine->root_device().memshare("seqram");
+                    auto* waveram_share = mame_machine->root_device().memshare("waveram");
 
                     // 1. Inject the OS RAM
                     if (osram_share != nullptr && processor->pendingOsram.getSize() == osram_share->bytes()) {
@@ -595,16 +667,24 @@ public:
                         std::memcpy(seqram_share->ptr(), processor->pendingSeqRam.getData(), seqram_share->bytes());
                     }
 
-                    // 3. Reset the CPU so the SD-1 OS re-evaluates the fresh RAM, RESET SYS-EX in memory
+                    // 3. Restore DSP wave RAM (sample data) so samples play correctly after warm boot.
+                    //    Without this, the firmware thinks samples are loaded (OS RAM state) but
+                    //    the actual sample data is missing from the DSP's wave memory.
+                    if (waveram_share != nullptr && processor->pendingWaveRam.getSize() == waveram_share->bytes()) {
+                        std::memcpy(waveram_share->ptr(), processor->pendingWaveRam.getData(), waveram_share->bytes());
+                    }
+
+                    // 4. Reset the CPU so the SD-1 OS re-evaluates the fresh RAM, RESET SYS-EX in memory
                     device_t* cpu = mame_machine->root_device().subdevice("maincpu");
                     if (cpu != nullptr) {
                             cpu->memory().space(AS_PROGRAM).write_byte(0xFFCE0B, 0x01);
                             cpu->reset();
                     }
 
-                    // 4. Free memory
+                    // 5. Free memory
                     processor->pendingOsram.setSize(0);
                     processor->pendingSeqRam.setSize(0);
+                    processor->pendingWaveRam.setSize(0);
                     processor->panicDelaySamples.store(static_cast<int>(processor->getHostSampleRate() * 0.5), std::memory_order_release);
                     
                 }
@@ -942,8 +1022,10 @@ public:
         node.m_id = 1;
         
         // Force MAME to generate audio at the exact sample rate required by the DAW host.
-        node.m_rate = { static_cast<uint32_t>(processor->getHostSampleRate()) };
-        node.m_sinks = 1;
+        uint32_t hostRate = static_cast<uint32_t>(processor->getHostSampleRate());
+        node.m_rate = { hostRate, hostRate, hostRate };
+        // S3000XL driver exposes a single stereo speaker; tell MAME the sink is 2 channels.
+        node.m_sinks = 2;
         node.m_sources = 0;
         
         info.m_nodes.push_back(node);
@@ -961,10 +1043,10 @@ public:
             processor->pushAudioFromMame(buffer, samples_this_frame);
         }
     };
-    
+
     virtual uint32_t sound_stream_source_open(uint32_t node, std::string name, uint32_t rate) override { return 0; };
     virtual uint32_t sound_get_generation() override { return 1; };
-    
+
     virtual void sound_stream_source_update(uint32_t id, int16_t *buffer, int samples_this_frame) override {};
     virtual void sound_stream_set_volumes(uint32_t id, const std::vector<float> &db) override {};
     virtual void sound_begin_update() override {};
@@ -1050,12 +1132,12 @@ void EnsoniqSD1AudioProcessor::parameterChanged(const juce::String& parameterID,
                     mameBufferThreshold.store(newThreshold, std::memory_order_relaxed);
                     
                     if ((juce::MessageManager::getInstanceWithoutCreating() != nullptr && juce::MessageManager::getInstanceWithoutCreating()->isThisTheMessageThread())) {
-                        setLatencySamples(newThreshold + getInternalHardwareLatencySamples());
+                        setLatencySamples(getEffectiveBufferThreshold() + getInternalHardwareLatencySamples());
                     }
                     // NEW: AU audio-thread fallback
                     else if (wrapperType == juce::AudioProcessor::wrapperType_AudioUnit) {
-                        juce::MessageManager::callAsync([this, newThreshold]() {
-                            setLatencySamples(newThreshold + getInternalHardwareLatencySamples());
+                        juce::MessageManager::callAsync([this]() {
+                            setLatencySamples(getEffectiveBufferThreshold() + getInternalHardwareLatencySamples());
                         });
                     }
                 }
@@ -1073,7 +1155,7 @@ void EnsoniqSD1AudioProcessor::parameterChanged(const juce::String& parameterID,
     
         // --- 2. AUTOMATION ---
         else {
-            uint64_t targetSample = totalRead.load(std::memory_order_acquire) + mameBufferThreshold.load(std::memory_order_relaxed);
+            uint64_t targetSample = totalRead.load(std::memory_order_acquire) + getEffectiveBufferThreshold();
             double sr = hostSampleRate.load(std::memory_order_relaxed);
             double t_anchor = anchorMameTime.load(std::memory_order_relaxed);
             uint64_t s_anchor = anchorDawSample.load(std::memory_order_relaxed);
@@ -1364,7 +1446,7 @@ void EnsoniqSD1AudioProcessor::runKeepAliveThread()
         if (available <= 0)
             continue;
 
-        int maxBuffer = mameBufferThreshold.load(std::memory_order_relaxed);
+        int maxBuffer = getEffectiveBufferThreshold();
         if (maxBuffer <= 0)
             maxBuffer = 512;
 
@@ -1405,6 +1487,7 @@ void EnsoniqSD1AudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     if (!ensoniqDir.exists()) ensoniqDir.createDirectory();
 
     hostSampleRate.store(sampleRate);
+    hostBlockSize.store(juce::jmax(1, samplesPerBlock), std::memory_order_relaxed);
     
     auto* choiceParam = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("buffer_size"));
         if (choiceParam != nullptr) {
@@ -1413,7 +1496,7 @@ void EnsoniqSD1AudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
         }
 
         // Report buffer for Latency Compensation (PDC)
-        int currentThreshold = mameBufferThreshold.load(std::memory_order_relaxed);
+        int currentThreshold = getEffectiveBufferThreshold();
         int hwLatency = getInternalHardwareLatencySamples();
         
         setLatencySamples(currentThreshold + hwLatency);
@@ -1487,7 +1570,7 @@ void EnsoniqSD1AudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
                 // NEW: AU Flag that prepareToPlay just finished
                 if (wrapperType == juce::AudioProcessor::wrapperType_AudioUnit) {
                     prepareWasCalled.store(true, std::memory_order_release);
-                    maxOfflineBuffer.store(mameBufferThreshold.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                    maxOfflineBuffer.store(getEffectiveBufferThreshold(), std::memory_order_relaxed);
                 }
 }
 
@@ -1576,13 +1659,13 @@ void EnsoniqSD1AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                                 
                 // 3. Clean slate for the incoming MIDI notes
                 totalRead.store(0, std::memory_order_release);
-                totalWritten.store(mameBufferThreshold.load(std::memory_order_relaxed), std::memory_order_release);
+                totalWritten.store(getEffectiveBufferThreshold(), std::memory_order_release);
                 needAnchorSync.store(true, std::memory_order_release);
             }
         }
     
     uint64_t currentReadPos = totalRead.load(std::memory_order_acquire);
-    int threshold = mameBufferThreshold.load(std::memory_order_relaxed);
+    int threshold = getEffectiveBufferThreshold();
     double sr = hostSampleRate.load(std::memory_order_relaxed);
     
     // Security boot check
@@ -1610,9 +1693,9 @@ void EnsoniqSD1AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         // offlineChanged mid-session reset
         if (offlineChanged && !freshPrepare && currentReadPos > 0) {
             pendingAUMidi.clear();
-            uint64_t newWritePos = currentReadPos + mameBufferThreshold.load(std::memory_order_relaxed);
+            uint64_t newWritePos = currentReadPos + getEffectiveBufferThreshold();
             totalWritten.store(newWritePos, std::memory_order_release);
-            maxOfflineBuffer.store(mameBufferThreshold.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            maxOfflineBuffer.store(getEffectiveBufferThreshold(), std::memory_order_relaxed);
             for (int j = 0; j < RING_BUFFER_SIZE; ++j) {
                 ringBufferL[j] = 0.0f; ringBufferR[j] = 0.0f;
                 ringBufferAuxL[j] = 0.0f; ringBufferAuxR[j] = 0.0f;
@@ -1931,7 +2014,7 @@ void EnsoniqSD1AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     if (isOffline) {
             timeoutMs = 2000;
             // --- BOUNCE JITTER FIX ---
-            maxOfflineBuffer.store(numSamples + mameBufferThreshold.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            maxOfflineBuffer.store(numSamples + getEffectiveBufferThreshold(), std::memory_order_relaxed);
         }
     
     if (timeoutMs > 0) {
@@ -1939,7 +2022,7 @@ void EnsoniqSD1AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         uint64_t targetWritePos = currentReadPos + numSamples;
         
         if (isOffline) {
-            targetWritePos += mameBufferThreshold.load(std::memory_order_relaxed);
+            targetWritePos += getEffectiveBufferThreshold();
         }
         
         while (isMameRunningFlag()) {
@@ -2121,7 +2204,7 @@ void EnsoniqSD1AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 // AU BOUNCE "NO-READ-AHEAD" GATE (Logic Pro specifically isolated)
                 // ========================================================
                 if (wrapperType == juce::AudioProcessor::wrapperType_AudioUnit && isNonRealtime()) {
-                    maxOfflineBuffer.store(mameBufferThreshold.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                    maxOfflineBuffer.store(getEffectiveBufferThreshold(), std::memory_order_relaxed);
                 }
     
     }
@@ -2246,6 +2329,7 @@ void EnsoniqSD1AudioProcessor::getStateInformation (juce::MemoryBlock& destData)
             // Request the memory block pointers directly from MAME
             auto* osram_share = mameMachine->root_device().memshare("osram");
             auto* seqram_share = mameMachine->root_device().memshare("seqram");
+            auto* waveram_share = mameMachine->root_device().memshare("waveram");
 
             if (osram_share != nullptr) {
                 juce::MemoryBlock osBlock(osram_share->ptr(), osram_share->bytes());
@@ -2255,6 +2339,20 @@ void EnsoniqSD1AudioProcessor::getStateInformation (juce::MemoryBlock& destData)
             if (seqram_share != nullptr) {
                 juce::MemoryBlock seqBlock(seqram_share->ptr(), seqram_share->bytes());
                 xml->setAttribute("ram_seqram", seqBlock.toBase64Encoding());
+            }
+
+            // Save DSP wave RAM so samples survive state save/load.
+            // The wave RAM is large (32 MiB) so we compress it with zlib before base64.
+            if (waveram_share != nullptr) {
+                juce::MemoryBlock waveBlock(waveram_share->ptr(), waveram_share->bytes());
+                juce::MemoryBlock compressed;
+                juce::MemoryOutputStream mos(compressed, false);
+                {
+                    juce::GZIPCompressorOutputStream gzStream(mos, 9);
+                    gzStream.write(waveBlock.getData(), waveBlock.getSize());
+                    gzStream.flush();
+                }
+                xml->setAttribute("ram_waveram", compressed.toBase64Encoding());
             }
         }
     
@@ -2381,10 +2479,31 @@ void EnsoniqSD1AudioProcessor::setStateInformation (const void* data, int sizeIn
                     }
                 }
                 else if (xmlState->hasAttribute("ram_osram")) {
-                    
+
                     // LOAD FROM NEW XML FORMAT
                     pendingOsram.fromBase64Encoding(xmlState->getStringAttribute("ram_osram"));
                     pendingSeqRam.fromBase64Encoding(xmlState->getStringAttribute("ram_seqram"));
+
+                    // Restore DSP wave RAM (zlib-compressed base64).
+                    // Without this, the firmware thinks samples are loaded (OS RAM state)
+                    // but the actual sample data is missing from wave RAM, producing garbage.
+                    if (xmlState->hasAttribute("ram_waveram")) {
+                        juce::MemoryBlock compressed;
+                        compressed.fromBase64Encoding(xmlState->getStringAttribute("ram_waveram"));
+                        if (compressed.getSize() > 0) {
+                            juce::MemoryInputStream mis(compressed, false);
+                            juce::GZIPDecompressorInputStream gzStream(mis);
+                            juce::MemoryOutputStream mos;
+                            auto buf = std::make_unique<char[]>(65536);
+                            while (!gzStream.isExhausted()) {
+                                auto num = gzStream.read(buf.get(), 65536);
+                                if (num <= 0) break;
+                                mos.write(buf.get(), (size_t)num);
+                            }
+                            pendingWaveRam = mos.getMemoryBlock();
+                        }
+                    }
+
                     pendingRamInjection.store(true, std::memory_order_release);
                     needsBootPreRoll.store(true, std::memory_order_release);
                     isWarmBoot.store(true, std::memory_order_release); // LOAD STATE FLAG

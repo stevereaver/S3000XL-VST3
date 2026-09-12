@@ -57,17 +57,21 @@ constant** — it differs per machine:
 |----------|--------------------------|--------------------------------------------------|
 | SD-1     | 5                        | Main L, Main R, Aux L, Aux R, Floppy             |
 | MPC3000  | 11                       | Main L/R + 8 individual outs + …                 |
-| S3000XL  | 3                        | **ch0 = FLOPPY seek sound, ch1 = MAIN L, ch2 = MAIN R** |
+| S3000XL  | 3 with floppy device     | **ch0=floppy, ch1=L, ch2=R**                      |
 
 - **Measure the stride**: the `-wavwrite` WAV header's channel count = `m_outputs_count`.
   Confirmed in `src/emu/sound.cpp`: `wav_add_data_16(wav, buf, samples * m_outputs_count)`.
 - **Wrong stride = corrupt render**: too big → periodic **silent gaps** (over-reads a short
   buffer); too small → **scrambled / mis-read** audio. Not affected by sample rate or buffer
   size → it looks like a "deterministic render bug." A sustained sine test tone exposes it.
-- **Channel ORDER matters**: identify main L/R among the channels. Capture a WAV during boot:
-  the **mechanical FLOPPY-seek sound sits on its own channel** — DROP it (don't route the disk
-  rattle to the instrument out). For S3000XL the main stereo is `pcm[i*3+1]` / `pcm[i*3+2]`,
-  and `pcm[i*3+0]` (floppy) is muted.
+- **Channel ORDER matters**: identify main L/R among all speakers, including nested devices.
+  S3000XL's configured floppy adds a speaker before the main stereo speaker. The observed
+  3-channel layout uses `pcm[i*3+1]` / `pcm[i*3+2]` for main L/R. The plugin queries
+  `sound().outputs_count()` for the stride and uses channels 0/1 in the 2-channel case.
+- **Producer buffering must cover a host block**: use at least the host block size as the
+  producer's buffering threshold, even when the Internal Buffer setting is smaller. Otherwise
+  every host callback can run short and insert silence. MIDI timing, prefill and PDC must use
+  the same effective threshold.
 - The tap itself is machine-agnostic: `osd::add_audio_to_recording()` at the host rate
   (pass `-samplerate <hostRate>`). Only the **stride + L/R mapping** is per-machine.
 

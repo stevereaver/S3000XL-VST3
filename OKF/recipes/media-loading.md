@@ -63,6 +63,18 @@ Rule of thumb:
 
 HDD and `cdrom_2x` images load cleanly in testing.
 
+## Floppy density / disk-change status read (FDC 74HC365)
+
+The S3000XL firmware reads floppy density (HD vs DD) and disk-change state through a 74HC365 buffer mapped alongside the uPD72069 FDC. The driver exposes this via `s3000_state::fdc_hc365_r()`, which returns `floppy_is_hd() ? 0x04 : 0x00` OR'd with `dskchg_r()`.
+
+The S3000/CD3000i and MPC3000 I/O maps wire this read at `0x0020-0x0023` with `umask16(0xff00)` (the high byte of the FDC word). The S3000XL I/O map was originally missing it, so the firmware could not detect floppy density or disk-change — floppy-loaded samples failed to play correctly. The fix adds the same read to `s3000xl_io_map`:
+
+```cpp
+map(0x0020, 0x0023).r(FUNC(s3000_state::fdc_hc365_r)).umask16(0xff00);
+```
+
+After this change, the S3000XL firmware correctly detects HD floppies and disk changes, and floppy sample loading works.
+
 ## Hard disk file locking
 
 MAME opens `.chd` files **read-write exclusive**. If another MAME process (e.g., standalone MAMEUI) has the same disk open, the plugin receives:

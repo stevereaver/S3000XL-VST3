@@ -22,20 +22,24 @@
   },
   "WORKING": {
     "panel_render": "AKAI S3000XL panel from the MAME layout; buttons C0..C7 via hit-test -> buttonParams -> set_value; auto-generated clickmap (36 buttons + 2 dial zones).",
-    "audio": "STEREO. m_outputs_count = 3 (verified via -wavwrite): ch0 = FLOPPY sound (dropped), ch1 = MAIN L, ch2 = MAIN R. Stride 3, take pcm[i*3+1]/[i*3+2]. Clean (RAM test + sample playback).",
+    "audio": "FIXED (wave RAM persistence). Runtime reports 3 channels including the nested floppy speaker: ch0=floppy, ch1=L, ch2=R. Producer threshold uses max(Internal Buffer, host block size). Root cause of loaded-sample garble: the plugin saved/restored OS RAM and Seq RAM on state save/load but NOT the DSP wave RAM (32 MiB at s3000.cpp dsp_map). After a warm boot the firmware believed samples were loaded (OS RAM state intact) but the actual sample data was missing from the L7A1045's wave memory, so the DSP read garbage. Fix: expose wave RAM as a named share (\"waveram\") in s3000.cpp dsp_map, then save it (zlib-compressed) under ram_waveram in getStateInformation and inject it in the same pendingRamInjection path as osram/seqram. Standalone MAME Lua inspection confirmed no voices keyed on and zero mixer volumes after panel PLAY when wave RAM was empty.",
+
+
+
     "midi": "VST MIDI in/out via the emulated UART; responsive.",
-    "media": "Floppy + CD + HDD. HDD (.chd) and CD (.iso via cdrom_2x) load samples CLEANLY. See findings below.",
+    "media": "Floppy + CD + HDD. HDD (.chd) and CD (.iso via cdrom_2x) load samples CLEANLY. Floppy FIXED: s3000xl_io_map was missing the 74HC365 FDC status read at 0x0020-0x0023 (umask16 0xff00) that the S3000/CD3000i and MPC3000 maps have. Without fdc_hc365_r wired in, the firmware could not read floppy density (HD/DD) or disk-change, so floppy-loaded samples failed. Fix mirrors the S3000/MPC3000 hookup: map(0x0020, 0x0023).r(FUNC(s3000_state::fdc_hc365_r)).umask16(0xff00). See findings below.",
     "dial": "DATA ENTRY = IPT_DIAL analog -> analog_field::set_value; click (+-1) + drag-to-turn + 'data_entry' VST param.",
     "params": "45 VST params (5 float + 38 button bool + 2 choice) exposed. Requires the unique pluginCode (see findings)."
   },
   "KEY_FINDINGS": {
-    "audio_stride": "MAME final mix stride = m_outputs_count (machine-specific): SD-1=5, MPC3000=11, S3000XL=3. Wrong stride = gaps (too big) or scrambled audio (too small). Measure via -wavwrite WAV header. Identify main L/R; drop the floppy-sound channel.",
+    "audio_stride": "MAME recording stride = sound().outputs_count(). S3000XL runtime reports 3, including a nested floppy-device speaker in addition to the driver's stereo speaker. Inspect the complete device tree, not only top-level SPEAKER declarations. Channel mapping and producer/consumer buffer sizing are separate correctness requirements.",
     "cd_timing": "cdrom vs cdrom_2x share identity (Sony CDU-76S), differ ONLY in SCSI timing. The firmware needs cdrom_2x's paced 2x transfer to read a disc CLEANLY; plain cdrom is too fast -> corrupted sample data -> crackle. cdrom_2x does NOT slow emulation (186%). Use cdrom_2x when a disc is loaded, plain cdrom when empty.",
     "scsi_defaults": "s3000xl PRE-POPULATES scsi:4=cdrom_2x, scsi:5=harddisk (MPC3000 leaves them empty). Don't blindly override pre-populated slots.",
     "media_lock": "MAME opens harddisk .chd READ-WRITE EXCLUSIVE. A 2nd MAME instance (standalone MAMEUI) holding the same disk -> 'permission denied (generic:13)' -> fatal error. Don't run standalone MAME on the same disk while testing.",
     "graceful_bootfail": "Check cli_frontend::execute() return; on failure set isMameRunning=false (no DAW freeze) + clear persisted media paths (no crash-loop).",
     "unique_plugincode": "Each plugin needs a UNIQUE 4-char pluginCode. Shared code (both 'Mp30') = same VST3 UID = DAW confuses param caches (only Volume showed). S3000XL='S3kx', MPC3000='Mp30'.",
-    "black_panel": "Missing device ROM (hd61830.bin) -> MAME silently fails to start -> black panel. Include device ROMs in the self-check."
+    "black_panel": "Missing device ROM (hd61830.bin) -> MAME silently fails to start -> black panel. Include device ROMs in the self-check.",
+    "floppy_status_read": "s3000xl_io_map was missing the 74HC365 FDC status read that S3000/CD3000i and MPC3000 have at 0x0020-0x0023 (umask16 0xff00). fdc_hc365_r returns floppy_is_hd() | dskchg_r(); without it the firmware cannot detect HD/DD density or disk-change, so floppy sample loads fail. Fix: add map(0x0020, 0x0023).r(FUNC(s3000_state::fdc_hc365_r)).umask16(0xff00) to s3000xl_io_map."
   },
   "OPEN_ITEMS": {
     "lcd_render_pump": "The LCD only refreshes on events. OSD update() early-returned on skip_redraw (under -nothrottle MAME frameskips -> grab skipped). Decoupling from skip_redraw was applied but did NOT fully fix it. NEXT: pump the frame grab on a fixed cadence / drive video().frame_update() independent of MAME's frameskip.",
@@ -43,6 +47,6 @@
     "format_combos": "F7+F8 (Format) and other 2-key combos are hard with mouse-only; plan: expose unused-CC button routing so a hardware controller can send them."
   },
   "build": "CMake/MSVC build. MAME: make vs2022 SUBTARGET=s3000xl SOURCES=src/mame/akai/s3000.cpp. Plugin: cmake --preset windows-release && cmake --build build --config Release --target S3000XL-VST_VST3. VST3 bundle: build/plugin/S3000XL-VST_artefacts/Release/VST3/S3000XL-VST.vst3. See BUILD.md.",
-  "last_updated": "2026-07-26",
+  "last_updated": "2026-09-11",
   "mantra": "The chat can be lost; the repo cannot. Grep before you claim. The compiler & the DAW are the judges."
 }

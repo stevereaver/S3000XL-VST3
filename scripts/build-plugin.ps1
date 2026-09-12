@@ -10,7 +10,8 @@ param(
     [string] $BuildDir = "build",
 
     [string] $JuceRoot = $env:JUCE_ROOT,
-    [string] $MameRoot = $env:MAME_ROOT
+    [string] $MameRoot = $env:MAME_ROOT,
+    [string] $VSInstance = $env:CMAKE_GENERATOR_INSTANCE
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,9 +29,11 @@ if (-not (Test-Path (Join-Path $MameRoot "makefile"))) {
 
 $build = Join-Path $root $BuildDir
 Write-Host "Configuring CMake..." -ForegroundColor Cyan
-& cmake -B $build -G "Visual Studio 17 2022" -A x64 `
-    -DJUCE_ROOT="$JuceRoot" `
-    -DMAME_ROOT="$MameRoot"
+$cmakeArgs = @("-B", $build, "-G", "Visual Studio 17 2022", "-A", "x64", "-DJUCE_ROOT=$JuceRoot", "-DMAME_ROOT=$MameRoot")
+if ($VSInstance) {
+    $cmakeArgs += "-DCMAKE_GENERATOR_INSTANCE=$VSInstance"
+}
+& cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 
 Write-Host "Building plugin ($Config)..." -ForegroundColor Cyan

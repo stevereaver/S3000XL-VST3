@@ -293,6 +293,9 @@ public:
     // Callback to push generated audio from MAME into our ring buffers
     void pushAudioFromMame(const int16_t* pcmBuffer, int numSamples);
 
+    // OSD output stream path: 2-channel interleaved int16 (L, R)
+    void pushAudioFromMameOSD(const int16_t* buffer, int numSamples);
+
     // ========================================================
     // MIDI INPUT HANDLING (JUCE -> MAME)
     // ========================================================
@@ -334,6 +337,12 @@ public:
 
     // Dynamically adjustable buffer threshold for MAME processing
     std::atomic<int> mameBufferThreshold{ 1024 };
+    std::atomic<int> hostBlockSize{ 1 };
+
+    int getEffectiveBufferThreshold() const {
+        return juce::jmax(mameBufferThreshold.load(std::memory_order_relaxed),
+                          hostBlockSize.load(std::memory_order_relaxed));
+    }
 
     // Dynamic offline buffer for sync
     std::atomic<int> maxOfflineBuffer{ 1024 };
@@ -341,6 +350,7 @@ public:
         // --- RAM INJECTION BUFFERS ---
         juce::MemoryBlock pendingOsram;
         juce::MemoryBlock pendingSeqRam;
+        juce::MemoryBlock pendingWaveRam;
         std::atomic<bool> pendingRamInjection{ false };
     
         // --- BANK INJECTION (60-program bank → osram, no CPU reset) ---

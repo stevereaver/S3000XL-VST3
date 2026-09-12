@@ -13,7 +13,7 @@ REM   VS_VCVARSALL  default: C:\Program Files\Microsoft Visual Studio\2022\Enter
 REM ------------------------------------------------------------------------------
 
 set "REPO_ROOT=%~dp0.."
-set "MAME_ROOT=%REPO_ROOT%\mame"
+if not defined MAME_ROOT set "MAME_ROOT=%REPO_ROOT%\mame"
 
 if not defined MSYS2_ROOT set "MSYS2_ROOT=C:\msys64"
 if not defined VS_VCVARSALL set "VS_VCVARSALL=C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"
@@ -23,7 +23,7 @@ set "OS=Windows_NT"
 set "MINGW_PREFIX=/mingw64"
 
 REM Generate VS2022 solution with GENie under MSYS2/MinGW64.
-"%MSYS2_ROOT%\usr\bin\bash.exe" -lc "export PATH=/mingw64/bin:$PATH; export OS=Windows_NT; export MINGW_PREFIX=/mingw64; cd '$(cygpath -u '%MAME_ROOT%')' && make vs2022 SUBTARGET=s3000xl SOURCES=src/mame/akai/s3000.cpp NOWERROR=1" > "%MAME_ROOT%\genie_s3000xl.log" 2>&1
+"%MSYS2_ROOT%\usr\bin\bash.exe" -lc "export PATH=/mingw64/bin:/usr/bin:$PATH; export OS=Windows_NT; export MINGW_PREFIX=/mingw64; cd \"$(cygpath -u \"%MAME_ROOT:\=/%\")\" && mingw32-make vs2022 SUBTARGET=s3000xl SOURCES=src/mame/akai/s3000.cpp NOWERROR=1" > "%MAME_ROOT%\genie_s3000xl.log" 2>&1
 if %errorlevel% neq 0 (
     echo GENie step failed. See %MAME_ROOT%\genie_s3000xl.log
     exit /b %errorlevel%
